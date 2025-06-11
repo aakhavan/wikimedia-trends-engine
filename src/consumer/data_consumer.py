@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     consumer = None
+    processed_message_count = 0 # <--- Add counter
     try:
         consumer = KafkaConsumer(
             config.KAFKA_TOPIC,  # Use config.KAFKA_TOPIC
@@ -27,7 +28,8 @@ def main():
         logger.info("Waiting for messages...")
 
         for message in consumer:
-            logger.info(f"Received: Partition={message.partition}, Offset={message.offset}, Key={message.key}")
+            processed_message_count += 1 # <--- Increment counter
+            logger.info(f"Received (Count: {processed_message_count}): Partition={message.partition}, Offset={message.offset}, Key={message.key}")
             event_data = message.value
             if event_data and isinstance(event_data, dict) and 'title' in event_data:
                 logger.info(f"  Event Title: {event_data['title']}")
@@ -44,7 +46,7 @@ def main():
         logger.error(f"An unexpected error occurred in the consumer: {e}", exc_info=True)
     finally:
         if consumer:
-            logger.info("Closing Kafka consumer.")
+            logger.info(f"Closing Kafka consumer. Total messages processed in this session: {processed_message_count}") # <--- Log total
             consumer.close()
 
 
