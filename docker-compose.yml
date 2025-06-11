@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka-kraft
+    ports:
+      - "9092:9092" # For clients outside Docker (e.g., your local Python script)
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller' # Run as both broker and controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka-kraft:9093' # NodeID@Host:ControllerPort
+      KAFKA_LISTENERS: 'PLAINTEXT://kafka-kraft:29092,CONTROLLER://kafka-kraft:9093,PLAINTEXT_HOST://0.0.0.0:9092'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT_HOST://localhost:9092,PLAINTEXT://kafka-kraft:29092,CONTROLLER://kafka-kraft:9093'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,INTERNAL:PLAINTEXT'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      # You MUST generate a unique CLUSTER_ID.
+      # Run: docker run --rm confluentinc/cp-kafka:latest kafka-storage.sh random-uuid
+      # And replace the CLUSTER_ID below with the output.
+      CLUSTER_ID: '8hmf5K_tQwaupe4sKU6AwQ'
+    volumes:
+      - kafka_data:/var/lib/kafka/data # Persist Kafka data
+
+volumes:
+  kafka_data:
+    driver: local
