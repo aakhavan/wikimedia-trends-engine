@@ -1,13 +1,17 @@
-    # Python bytecode
-    __pycache__/
-    *.pyc
+# Python bytecode
+__pycache__/
+*.pyc
 
-    # Virtual environment (if you use one in the project root)
-    .venv/
-    venv/
+# Virtual environment (if you use one in the project root)
+.venv/
+venv/
 
-    # Editor/IDE specific files (common examples)
-    .idea/
-    *.sublime-project
-    *.sublime-workspace
-    .vscode/
+# Editor/IDE specific files (common examples)
+.idea/
+*.sublime-project
+*.sublime-workspace
+.vscode/
+
+# Application output and generated data
+*.jsonl
+*.csv
