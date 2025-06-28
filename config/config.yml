@@ -1,0 +1,12 @@
+# config/config.yml
+#
+# Main application configuration file.
+# This file IS meant to be checked into version control.
+# Do NOT store secrets here.
+
+wikimedia_api:
+  base_url: "https://dumps.wikimedia.org/other/pageviews"
+
+data_paths:
+  # Path for raw downloaded data, relative to the project root.
+  raw_pageviews: "data/pageviews"
