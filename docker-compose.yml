@@ -1,31 +1,61 @@
 version: '3.8'
 
 services:
+  # Kafka service for real-time event streaming
   kafka:
     image: confluentinc/cp-kafka:latest
     container_name: kafka-kraft
     ports:
-      - "9092:9092" # For clients outside Docker (e.g., your local Python script)
+      # Exposes the broker on port 9092 to your local machine (for producers/consumers)
+      - "9092:9092"
     environment:
       KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: 'broker,controller' # Run as both broker and controller
-      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka-kraft:9093' # NodeID@Host:ControllerPort
+      # Using modern KRaft mode, which doesn't require Zookeeper
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka-kraft:9093'
       KAFKA_LISTENERS: 'PLAINTEXT://kafka-kraft:29092,CONTROLLER://kafka-kraft:9093,PLAINTEXT_HOST://0.0.0.0:9092'
       KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT_HOST://localhost:9092,PLAINTEXT://kafka-kraft:29092,CONTROLLER://kafka-kraft:9093'
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,INTERNAL:PLAINTEXT'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
       KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      # You MUST generate a unique CLUSTER_ID.
+      # You MUST generate a unique CLUSTER_ID for your setup.
       # Run: docker run --rm confluentinc/cp-kafka:latest kafka-storage.sh random-uuid
-      # And replace the CLUSTER_ID below with the output.
-      CLUSTER_ID: '8hmf5K_tQwaupe4sKU6AwQ'
+      CLUSTER_ID: '8hmf5K_tQwaupe4sKU6AwQ' # Replace with your own generated ID
     volumes:
-      - kafka_data:/var/lib/kafka/data # Persist Kafka data
+      - kafka_data:/var/lib/kafka/data
 
+  # PostgreSQL database for our local data warehouse
+  postgres:
+    image: postgres:15
+    container_name: wikimedia-postgres
+    ports:
+      # Exposes PostgreSQL on port 5432 to your local machine (for the Spark job)
+      - "5432:5432"
+    environment:
+      # These credentials match the defaults in your .env and config.yml
+      POSTGRES_USER: "docker"
+      POSTGRES_PASSWORD: "docker"
+      POSTGRES_DB: "wikimedia"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # A lightweight database management tool accessible from your browser
+  adminer:
+    image: adminer
+    container_name: adminer
+    ports:
+      # Access Adminer UI at http://localhost:8080
+      - "8080:8080"
+    depends_on:
+      - postgres # Ensures postgres starts before adminer
+
+# Named volumes to persist data even when containers are stopped or removed
 volumes:
   kafka_data:
+    driver: local
+  postgres_data:
     driver: local

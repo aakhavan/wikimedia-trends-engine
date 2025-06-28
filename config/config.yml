@@ -1,12 +1,30 @@
 # config/config.yml
-#
-# Main application configuration file.
-# This file IS meant to be checked into version control.
-# Do NOT store secrets here.
 
 wikimedia_api:
   base_url: "https://dumps.wikimedia.org/other/pageviews"
 
+spark_config:
+  # Paths to the required JDBC/connector JAR files, relative to the project root.
+  # This makes updating driver versions a simple config change.
+  jar_paths:
+    postgres: "jars/postgresql-42.7.1.jar"
+    snowflake: "jars/spark-snowflake_2.12-2.12.0-spark_3.5.jar"
+
 data_paths:
-  # Path for raw downloaded data, relative to the project root.
   raw_pageviews: "data/pageviews"
+
+# --- NEW: Data Warehouse Configuration ---
+data_warehouse:
+  # Settings for the local PostgreSQL instance
+  postgres:
+    host: "localhost"
+    port: "5432"
+    database: "wikimedia"
+    table: "pageviews" # The target table name
+
+  # Settings for the Snowflake Data Warehouse
+  snowflake:
+    database: "WIKIMEDIA"
+    schema: "RAW"
+    table: "PAGEVIEWS"
+    warehouse: "COMPUTE_WH" # Default warehouse to use
