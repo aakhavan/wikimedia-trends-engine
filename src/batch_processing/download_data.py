@@ -1,73 +1,66 @@
+import argparse
 import logging
-import os
 from datetime import date, timedelta
 from pathlib import Path
 
 import requests
 
-# --- Configuration ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+from src.utils.config_loader import config
 
-# Base URL for Wikimedia pageview statistics
-BASE_URL = "https://dumps.wikimedia.org/other/pageviews"
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# The local directory where raw data will be stored.
-# We assume the script is run from the project root.
-OUTPUT_DIR = Path("data/pageviews")
+def download_pageviews_data(target_date: date):
+    """Downloads all 24 hourly pageview files for a specific date from Wikimedia."""
+    year, month, day = target_date.strftime("%Y"), target_date.strftime("%m"), target_date.strftime("%d")
 
-
-# --- End Configuration ---
-
-
-def download_pageviews_for_day(target_date: date):
-    """
-    Downloads all 24 hourly pageview files for a given date.
-
-    The file format is: pageviews-YYYYMMDD-HH0000.gz
-    """
-    year = target_date.strftime("%Y")
-    month = target_date.strftime("%m")
-    day = target_date.strftime("%d")
-
-    # Create the specific subdirectory for the given date
-    date_output_dir = OUTPUT_DIR / year / month / day
-    date_output_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Output directory created: {date_output_dir}")
+    base_url = config['wikimedia']['base_url']
+    output_dir = Path(config['data']['pageviews_path']) / year / month / day
+    output_dir.mkdir(parents=True, exist_ok=True)
+    logging.info(f"Output directory set to: {output_dir}")
 
     for hour in range(24):
-        # Format the hour to be two digits (e.g., 01, 02, ..., 23)
-        hour_str = f"{hour:02d}"
-        filename = f"pageviews-{year}{month}{day}-{hour_str}0000.gz"
-        file_url = f"{BASE_URL}/{year}/{year}-{month}/{filename}"
-        output_path = date_output_dir / filename
+        filename = f"pageviews-{year}{month}{day}-{hour:02d}0000.gz"
+        file_url = f"{base_url}/{year}/{year}-{month}/{filename}"
+        output_path = output_dir / filename
 
         if output_path.exists():
-            logger.info(f"File already exists, skipping: {filename}")
+            logging.info(f"File already exists, skipping: {filename}")
             continue
 
         try:
-            logger.info(f"Downloading: {file_url}")
+            logging.info(f"Downloading: {file_url}")
             response = requests.get(file_url, stream=True, timeout=30)
-            response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
+            response.raise_for_status()
 
-            with open(output_path, "wb") as f:
+            with open(output_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
-            logger.info(f"Successfully downloaded to: {output_path}")
+            logging.info(f"Successfully downloaded to: {output_path}")
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to download {file_url}: {e}")
-            # Optionally, you could clean up a partially downloaded file
-            if output_path.exists():
-                os.remove(output_path)
+            logging.error(f"Failed to download {file_url}. Error: {e}")
 
+def main():
+    """Main function to parse arguments and trigger the download."""
+    parser = argparse.ArgumentParser(description="Download Wikimedia pageview data for a specific date.")
+    parser.add_argument(
+        '--date',
+        type=str,
+        help="The date to download data for in YYYY-MM-DD format. Defaults to yesterday."
+    )
+    args = parser.parse_args()
+
+    if args.date:
+        try:
+            target_date = date.fromisoformat(args.date)
+        except ValueError:
+            logging.error(f"Invalid date format: '{args.date}'. Please use YYYY-MM-DD.")
+            return
+    else:
+        target_date = date.today() - timedelta(days=1)
+
+    download_pageviews_data(target_date)
 
 if __name__ == "__main__":
-    # We will download data for 'yesterday' as it's guaranteed to be complete.
-    # You can change this to any date you want to process.
-    target_download_date = date.today() - timedelta(days=1)
-
-    logger.info(f"--- Starting Wikimedia Pageviews Download for {target_download_date} ---")
-    download_pageviews_for_day(target_download_date)
-    logger.info("--- Download process finished ---")
+    main()

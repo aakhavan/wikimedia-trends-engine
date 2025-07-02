@@ -1,178 +1,128 @@
-# src/batch_processor/process_pageviews.py
 import argparse
 import logging
-import os
 from datetime import date, timedelta
+from pathlib import Path
 
-from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.functions import col, split
-from pyspark.sql.types import (IntegerType, StringType, StructField,
-                               StructType)
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, to_date, input_file_name, regexp_extract
+from pyspark.sql.types import StructType, StructField, StringType, LongType
 
-# --- Import the centralized config object ---
 from src.utils.config_loader import config
 
-# --- Configuration ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# --- Load JAR paths from config ---
-# This is much cleaner and more maintainable.
-spark_cfg = config['spark_config']
-POSTGRES_JAR_PATH = spark_cfg['jar_paths']['postgres']
-SNOWFLAKE_JAR_PATH = spark_cfg['jar_paths']['snowflake']
-ALL_JARS = f"{POSTGRES_JAR_PATH},{SNOWFLAKE_JAR_PATH}"
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
-def create_spark_session() -> SparkSession:
-    """Creates and configures a SparkSession with the necessary connectors."""
-    logger.info("Creating SparkSession...")
-    try:
-        spark = (
-            SparkSession.builder.appName("WikimediaPageviewsProcessing")
-            .config("spark.jars", ALL_JARS)
-            .getOrCreate()
-        )
-        logger.info("SparkSession created successfully.")
-        return spark
-    except Exception as e:
-        logger.error(f"Failed to create SparkSession: {e}")
-        raise
-
-
-def process_pageviews(spark: SparkSession, target_date: date) -> DataFrame:
+def process_wikimedia_pageviews(spark: SparkSession, processing_date: date, is_dev: bool = False):
     """
-    Reads raw pageview data from the local filesystem, cleans it,
-    and returns a transformed DataFrame.
+    Reads raw gzipped pageview data, processes it, and writes the result
+    to a partitioned Parquet dataset.
+
+    :param spark: The SparkSession object.
+    :param processing_date: The date to process.
+    :param is_dev: If True, process only a single file for development.
     """
-    logger.info(f"Starting pageview processing for date: {target_date}")
+    year, month, day = processing_date.strftime("%Y"), processing_date.strftime("%m"), processing_date.strftime("%d")
 
-    # Construct the input path from the configuration
-    raw_data_path = config['data_paths']['raw_pageviews']
-    year = target_date.strftime("%Y")
-    month = target_date.strftime("%m")
-    day = target_date.strftime("%d")
-    input_path = f"{raw_data_path}/{year}/{month}/{day}/*.gz"
+    schema = StructType([
+        StructField("project", StringType(), True),
+        StructField("page_title", StringType(), True),
+        StructField("view_counts", LongType(), True),
+        StructField("response_size", LongType(), True),
+    ])
 
-    logger.info(f"Reading data from: {input_path}")
+    # This is the new logic that uses the is_dev flag
+    if is_dev:
+        # For local development, process only one hour's data for speed.
+        input_path = str(Path(config['data']['pageviews_path']) / year / month / day / "pageviews-*-100000.gz")
+        logging.info("Running in development mode, processing a single file.")
+    else:
+        # In production, process all files for the given day.
+        input_path = str(Path(config['data']['pageviews_path']) / year / month / day / "*.gz")
+        logging.info("Running in production mode, processing all files.")
 
-    # Spark's text reader creates a single column named "value" by default
-    raw_df = spark.read.format("text").load(input_path)
+    logging.info(f"Reading data from: {input_path}")
 
-    logger.info("Cleaning and transforming data...")
-    cleaned_df = (
-        raw_df
-        # Split the single text column into multiple columns based on spaces
-        .withColumn("split_cols", split(col("value"), " "))
-        # Filter out malformed rows that don't have at least 4 parts
-        .filter(col("split_cols").isNotNull() & (col("split_cols").getItem(3).isNotNull()))
-        # Create the final columns from the split array
-        .withColumn("project", col("split_cols").getItem(0))
-        .withColumn("page_title", col("split_cols").getItem(1))
-        .withColumn("view_counts", col("split_cols").getItem(2).cast(IntegerType()))
-        # Filter for English Wikipedia only, as per the project plan
-        .filter(col("project") == "en.wikipedia")
-        # Add the date of the data as a partition-friendly column
-        .withColumn("view_date", col(f"'{target_date}'").cast("date"))
-        # Select and order the final columns for a clean schema
-        .select("view_date", "project", "page_title", "view_counts")
-    )
-    logger.info("Data transformation complete.")
-    return cleaned_df
+    df = spark.read.csv(input_path, schema=schema, sep=" ", header=False)
 
+    if df.rdd.isEmpty():
+        logging.warning(f"No raw data found for date {processing_date.strftime('%Y-%m-%d')}. Skipping processing.")
+        return
 
-def write_to_postgres(df: DataFrame, pg_config: dict):
-    """Writes a DataFrame to a PostgreSQL table using provided config."""
-    table_name = pg_config['table']
-    logger.info(f"Writing data to PostgreSQL table: {pg_config['database']}.public.{table_name}")
+    # The filter is currently removed for our test, but can be re-enabled.
+    pageviews_df = df.withColumn("filename", input_file_name()) \
+        .withColumn("view_date", to_date(regexp_extract(col("filename"), r'(\d{8})', 1), 'yyyyMMdd')) \
+        .select(
+        col("view_date"),
+        col("project"),
+        col("page_title"),
+        col("view_counts")
+    )  # .filter(col("project") == "en.wikipedia")
 
-    jdbc_url = f"jdbc:postgresql://{pg_config['host']}:{pg_config['port']}/{pg_config['database']}"
+    pageviews_df.cache()
 
-    # Credentials are read securely from environment variables
-    properties = {
-        "user": os.getenv("PG_USER"),
-        "password": os.getenv("PG_PASSWORD"),
-        "driver": "org.postgresql.Driver"
-    }
+    final_count = pageviews_df.count()
+    logging.info(
+        f"Found {final_count:,} total rows for date {processing_date.strftime('%Y-%m-%d')}.")
 
-    try:
-        # Use mode "overwrite" to make the job idempotent
-        df.write.jdbc(url=jdbc_url, table=table_name, mode="overwrite", properties=properties)
-        logger.info(f"Successfully wrote data to PostgreSQL table: {table_name}")
-    except Exception as e:
-        logger.error(f"Failed to write data to PostgreSQL: {e}")
-        raise
+    if final_count == 0:
+        logging.warning("No data found. The output will be empty.")
+    else:
+        logging.info("Sample of transformed data (all projects):")
+        pageviews_df.show(10, truncate=False)
 
-
-def write_to_snowflake(df: DataFrame, sf_config: dict):
-    """Writes a DataFrame to a Snowflake table using provided config."""
-    target_table = f"{sf_config['database']}.{sf_config['schema']}.{sf_config['table']}"
-    logger.info(f"Writing data to Snowflake table: {target_table}")
-
-    # Credentials and account info are read securely from environment variables
-    sf_options = {
-        "sfURL": f"{os.getenv('SNOWFLAKE_ACCOUNT')}.snowflakecomputing.com",
-        "sfUser": os.getenv("SNOWFLAKE_USER"),
-        "sfPassword": os.getenv("SNOWFLAKE_PASSWORD"),
-        "sfDatabase": sf_config['database'],
-        "sfSchema": sf_config['schema'],
-        "sfWarehouse": sf_config['warehouse'],
-        "dbtable": sf_config['table'],
-    }
+    output_path = str(Path(config['data']['processed_path']) / "pageviews.parquet")
+    logging.info(f"Writing {final_count:,} rows to Parquet format at: {output_path}")
 
     try:
-        (
-            df.write.format("snowflake")
-            .options(**sf_options)
-            .mode("overwrite")
-            .save()
-        )
-        logger.info(f"Successfully wrote data to {target_table}")
+        pageviews_df.write.mode("overwrite").partitionBy("view_date").parquet(output_path)
+        logging.info(f"Successfully wrote data for {processing_date.strftime('%Y-%m-%d')} to Parquet.")
     except Exception as e:
-        logger.error(f"Failed to write data to Snowflake: {e}")
+        logging.error(f"Failed to write data to Parquet. Error: {e}", exc_info=True)
         raise
+    finally:
+        pageviews_df.unpersist()
 
 
 def main():
-    """Main ETL script execution, parameterized for different targets."""
-    parser = argparse.ArgumentParser(description="Spark ETL job for Wikimedia pageviews.")
+    """Main function to initialize Spark and trigger the processing."""
+    parser = argparse.ArgumentParser(description="Process Wikimedia pageview data for a specific date.")
     parser.add_argument(
-        '--target',
+        '--date',
         type=str,
-        choices=['postgres', 'snowflake'],
-        default='postgres',
-        help="The destination for the processed data. Defaults to 'postgres'."
+        help="The date to process data for in YYYY-MM-DD format. Defaults to two days ago."
+    )
+    # Add a flag for development mode
+    parser.add_argument(
+        '--dev',
+        action='store_true',  # This makes it a flag, no value needed
+        help="Run in development mode, processing only a small subset of data."
     )
     args = parser.parse_args()
 
-    # Process data for 2 days ago to ensure all hourly files are available and complete.
-    target_process_date = date.today() - timedelta(days=2)
+    if args.date:
+        try:
+            target_date = date.fromisoformat(args.date)
+        except ValueError:
+            logging.error(f"Invalid date format: '{args.date}'. Please use YYYY-MM-DD.")
+            return
+    else:
+        target_date = date.today() - timedelta(days=2)
 
     spark = None
     try:
-        spark = create_spark_session()
-        pageviews_df = process_pageviews(spark, target_process_date)
+        spark = SparkSession.builder \
+            .appName(f"WikimediaPageviewsProcessing-{target_date.strftime('%Y-%m-%d')}") \
+            .getOrCreate()
 
-        logger.info("Sample of transformed data:")
-        pageviews_df.show(10, truncate=False)
-
-        if args.target == 'postgres':
-            pg_config = config['data_warehouse']['postgres']
-            write_to_postgres(pageviews_df, pg_config)
-        elif args.target == 'snowflake':
-            sf_config = config['data_warehouse']['snowflake']
-            write_to_snowflake(pageviews_df, sf_config)
-        else:
-            # This case is technically handled by argparse 'choices', but it's good practice
-            logger.error(f"Invalid target specified: {args.target}")
-            raise ValueError("Invalid target specified.")
+        # Pass the new flag to the processing function
+        process_wikimedia_pageviews(spark, target_date, is_dev=args.dev)
 
     except Exception as e:
-        logger.critical(f"ETL job failed: {e}", exc_info=True)
-        # In a real orchestrator, this would trigger an alert
+        logging.critical(f"An unexpected error occurred in the Spark job: {e}", exc_info=True)
     finally:
         if spark:
-            logger.info("Stopping SparkSession.")
+            logging.info("Stopping SparkSession.")
             spark.stop()
 
 

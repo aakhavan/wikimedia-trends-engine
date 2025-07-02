@@ -1,30 +1,25 @@
 # config/config.yml
 
-wikimedia_api:
+# Settings for the source Wikimedia API
+wikimedia:
   base_url: "https://dumps.wikimedia.org/other/pageviews"
 
-spark_config:
-  # Paths to the required JDBC/connector JAR files, relative to the project root.
-  # This makes updating driver versions a simple config change.
-  jar_paths:
-    postgres: "jars/postgresql-42.7.1.jar"
-    snowflake: "jars/spark-snowflake_2.12-2.12.0-spark_3.5.jar"
+spark: {}
 
-data_paths:
-  raw_pageviews: "data/pageviews"
+# Local data storage paths
+data:
+  pageviews_path: "data/pageviews"
+  processed_path: "data/processed"
 
-# --- NEW: Data Warehouse Configuration ---
-data_warehouse:
-  # Settings for the local PostgreSQL instance
-  postgres:
-    host: "localhost"
-    port: "5432"
-    database: "wikimedia"
-    table: "pageviews" # The target table name
+# --- Real-time Streaming Configuration ---
+# Settings for the Kafka cluster
+kafka:
+  bootstrap_servers: "localhost:9092"
+  topic: "wikimedia_events"
+  consumer_group_id: "wikimedia-data-consumer-group"
 
-  # Settings for the Snowflake Data Warehouse
-  snowflake:
-    database: "WIKIMEDIA"
-    schema: "RAW"
-    table: "PAGEVIEWS"
-    warehouse: "COMPUTE_WH" # Default warehouse to use
+# Settings for the Snowflake Data Warehouse (for a future phase)
+snowflake:
+  database: "WIKIMEDIA"
+  schema: "RAW"
+  warehouse: "COMPUTE_WH"
