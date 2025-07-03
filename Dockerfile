@@ -1,25 +1,27 @@
-# Use an official, well-maintained Spark base image that includes Python.
-FROM bitnami/spark:3.4.0
+# Use a specific version for reproducibility
+FROM bitnami/spark:3.5.1
 
-# --- SOLUTION: Switch to the root user to install dependencies ---
-USER root
-
-# Set the working directory inside the container
+# Set the working directory
 WORKDIR /app
 
-# Copy the requirements file first to leverage Docker's layer caching.
+# --- 1. Install Dependencies ---
+# Copy only the requirements file first to leverage Docker's layer caching.
 COPY requirements.txt .
 
-# Install the 'wheel' package first, then install all other dependencies.
-# This prevents fallback to the legacy 'setup.py install'.
+# Install 'wheel' first for efficiency, then install all other dependencies.
+# This entire step is cached as long as requirements.txt doesn't change.
 RUN pip install --no-cache-dir wheel && \
     pip install --no-cache-dir -r requirements.txt
 
-# --- BEST PRACTICE: Switch back to the non-root user ---
-# The default non-root user in the bitnami image is '1001'.
-USER 1001
-
-# Copy the application source code and configuration into the container
-# These files will now be owned by the non-root user.
+# --- 2. Copy Application Code ---
+# Now copy the rest of the application source code into the container.
 COPY src/ ./src
 COPY config/ ./config
+COPY scripts/ ./scripts
+
+# --- 3. Switch to Non-Root User for Security ---
+# The default non-root user in the bitnami image is '1001'.
+# All subsequent commands and the running container will use this user.
+USER 1001
+
+# The CMD (what the container runs by default) is inherited from the base image.
