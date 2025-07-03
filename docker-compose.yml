@@ -23,16 +23,21 @@ services:
     volumes:
       - kafka_data:/var/lib/kafka/data
 
-  # --- NEW: A dedicated container for our Spark application ---
+  # A dedicated container for our Spark application
   spark-app:
     build: . # Tells Docker to build the image from the Dockerfile in this directory
     container_name: spark-app
+    # Ensures Kafka is running before this container starts.
+    depends_on:
+      - kafka
     volumes:
-      # Mount the data directory so Spark can read/write files from/to the host
-      - ./data:/app/data
-      # Mount source and config for live code changes without rebuilding
+      # Mount source, config, scripts, and data for live code changes without rebuilding
       - ./src:/app/src
       - ./config:/app/config
+      - ./scripts:/app/scripts
+      - ./data:/app/data
+    # --- FIX: Run the container as the root user to solve volume permission issues ---
+    user: root
     # This command keeps the container running in the background
     # so we can execute our Spark job inside it.
     command: tail -f /dev/null
