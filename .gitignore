@@ -16,3 +16,5 @@ venv/
 # Application output and generated data
 *.jsonl
 *.csv
+
+.data/
